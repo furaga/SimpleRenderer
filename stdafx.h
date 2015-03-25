@@ -7,12 +7,23 @@
 
 #define SAFE_RELEASE(x)  { if(x) { (x)->Release(); (x)=NULL; } }	// 解放マクロ
 
+#ifndef SAFE_DELETE
+#define SAFE_DELETE(p)       { if (p) { delete (p);     (p)=NULL; } }
+#endif
+#ifndef SAFE_DELETE_ARRAY
+#define SAFE_DELETE_ARRAY(p) { if (p) { delete[] (p);   (p)=NULL; } }
+#endif
+#ifndef SAFE_RELEASE
+#define SAFE_RELEASE(p)      { if (p) { (p)->Release(); (p)=NULL; } }
+#endif
+
 #include <windows.h>
 #include <mmsystem.h>
 #include <crtdbg.h>
 #include <d3dx11.h>
 #include <xnamath.h>
 #include <dxerr.h>
+#include <memory.h>
 
 // 必要なライブラリをリンクする
 #pragma comment( lib, "d3d11.lib" )

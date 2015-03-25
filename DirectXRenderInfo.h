@@ -25,8 +25,8 @@ struct DirectXRenderInfo
 	ID3D11DepthStencilView*   pDepthStencilView = NULL;
 
 	ID3D11InputLayout*        pInputLayout = NULL;
-	ID3D11Buffer*             pVerBuffer[2];
-	ID3D11Buffer*             pIdxBuffer = NULL;
+	ID3D11Buffer*             pVerBuffers[1];
+	ID3D11Buffer*             pIndexBuffer = NULL;
 
 	ID3D11VertexShader*       pVertexShader = NULL;
 	ID3D11GeometryShader*     pGeometryShader = NULL;
@@ -51,13 +51,49 @@ struct DirectXRenderInfo
 
 	SIZE sizeWindow;
 
+private:
+	bool dispoed = false;
+
 public:
 	DirectXRenderInfo()
 	{
-		for (int i = 0; i < 2; i++)
-			pVerBuffer[i] = NULL;
+		pVerBuffers[0] = NULL;
 		for (int i = 0; i < 3; i++)
 			pCBuffer[i] = NULL;
+	}
+	bool IsDisposed()
+	{
+		return dispoed;
+	}
+	void Dispose()
+	{
+		SAFE_RELEASE(this->pDepthStencilState);
+		SAFE_RELEASE(this->pBlendState);
+		SAFE_RELEASE(this->pRasterizerState);
+
+		SAFE_RELEASE(this->pCBuffer[2]);
+		SAFE_RELEASE(this->pCBuffer[1]);
+		SAFE_RELEASE(this->pCBuffer[0]);
+
+		SAFE_RELEASE(this->pInputLayout);
+
+		SAFE_RELEASE(this->pPixelShader);
+		SAFE_RELEASE(this->pGeometryShader);
+		SAFE_RELEASE(this->pVertexShader);
+
+		SAFE_RELEASE(this->pIndexBuffer);
+		SAFE_RELEASE(this->pVerBuffers[0]);
+
+		SAFE_RELEASE(this->pDepthStencilView);
+		SAFE_RELEASE(this->pDepthStencil);
+
+		SAFE_RELEASE(this->pRenderTargetView);
+		SAFE_RELEASE(this->pSwapChain);
+
+		SAFE_RELEASE(this->pImmediateContext);
+		SAFE_RELEASE(this->pD3DDevice);
+
+		dispoed = true;
 	}
 	void SetDeviceSwapChain(ID3D11Device* device, ID3D11DeviceContext* context, IDXGISwapChain* swapchain, D3D_FEATURE_LEVEL features)
 	{

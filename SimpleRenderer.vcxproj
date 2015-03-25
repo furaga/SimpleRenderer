@@ -48,6 +48,9 @@
       <Optimization>Disabled</Optimization>
       <SDLCheck>true</SDLCheck>
       <PrecompiledHeader>Create</PrecompiledHeader>
+      <CompileAsManaged>false</CompileAsManaged>
+      <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
+      <MinimalRebuild>false</MinimalRebuild>
     </ClCompile>
     <Link>
       <GenerateDebugInformation>true</GenerateDebugInformation>
@@ -72,7 +75,7 @@
   <ItemGroup>
     <ClCompile Include="Configuration.cpp" />
     <ClCompile Include="DirectXHelper.cpp" />
-    <ClCompile Include="Game.cpp" />
+    <ClCompile Include="CGame.cpp" />
     <ClCompile Include="main.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -80,7 +83,8 @@
     <ClInclude Include="ConstBuffer.h" />
     <ClInclude Include="DirectXHelper.h" />
     <ClInclude Include="DirectXRenderInfo.h" />
-    <ClInclude Include="Game.h" />
+    <ClInclude Include="CGame.h" />
+    <ClInclude Include="IGame.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="VertexPositionColorTexture.h" />
   </ItemGroup>

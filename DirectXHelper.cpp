@@ -4,8 +4,8 @@
 #include "ConstBuffer.h"
 #include "Configuration.h"
 #include "VertexPositionColorTexture.h"
-
 #include "DirectXRenderInfo.h"
+#include "IGame.h"
 
 DirectXHelper* g_pDXHelper = NULL;
 PDirectXRenderInfo* g_pDXInfo = NULL;
@@ -22,7 +22,7 @@ LRESULT CALLBACK OnWndProc(HWND hWnd, UINT msg, UINT wParam, LONG lParam)
 	{
 	case WM_DESTROY:
 		// Direct3Dの終了処理
-		CleanupDirect3D();
+		g_pDXHelper->Dispose(*g_pDXInfo);
 		// ウインドウを閉じる
 		PostQuitMessage(0);
 		(*g_pDXInfo)->hWindow = NULL;
@@ -30,7 +30,7 @@ LRESULT CALLBACK OnWndProc(HWND hWnd, UINT msg, UINT wParam, LONG lParam)
 
 		// ウインドウ サイズの変更処理
 	case WM_SIZE:
-		if (!g_pDXInfo || !g_pDXInfo->pD3DDevice || wParam == SIZE_MINIMIZED)
+		if (!g_pDXInfo || !(*g_pDXInfo)->pD3DDevice || wParam == SIZE_MINIMIZED)
 			break;
 		g_pDXHelper->Resize(*g_pDXInfo, { LOWORD(lParam), HIWORD(lParam) });
 		break;
@@ -76,7 +76,7 @@ DirectXHelper::~DirectXHelper() = default;
 
 PDirectXRenderInfo DirectXHelper::Initialize(HINSTANCE hInst)
 {
-	PDirectXRenderInfo pInfo = std::make_unique<DirectXRenderInfo>();
+	PDirectXRenderInfo pInfo = std::make_shared<DirectXRenderInfo>();
 	pInfo->hInst = hInst;
 
 	HWND hWindow = NULL;
@@ -88,18 +88,10 @@ PDirectXRenderInfo DirectXHelper::Initialize(HINSTANCE hInst)
 	}
 	pInfo->hWindow = hWindow;
 
-	// ウインドウのクライアント エリア
-	RECT rc;
-	GetClientRect(hWindow, &rc);
-	UINT width = rc.right - rc.left;
-	UINT height = rc.bottom - rc.top;
+	hr = InitializeDirect3D(pInfo);
 
-	hr = GenerateDeviceSwapChain(pInfo->dxconfig, { width, height }, hWindow, pInfo);
-	if (FAILED(hr))
-	{
-		DXTRACE_ERR(L"DirectXHelper::Initialize GenerateDeviceSwapChain", hr);
-		return pInfo;
-	}
+	g_pDXHelper = this;
+	g_pDXInfo = &pInfo;
 
 	/*UINT sizes[] = { sizeof(::cbNeverChanges), sizeof(::cbChangesEveryFrame), sizeof(::cbChangesEveryObject), };
 	GenerateConstantBuffers(3, sizes, pinfo->pD3DDevice, pinfo->pCBuffer);*/
@@ -108,6 +100,90 @@ PDirectXRenderInfo DirectXHelper::Initialize(HINSTANCE hInst)
 	return pInfo;
 }
 
+bool DirectXHelper::AppIdle(const PDirectXRenderInfo& pInfo, IGame* game)
+{
+	if (!pInfo->pD3DDevice)
+		return false;
+
+	HRESULT hr;
+	// デバイスの消失処理
+	hr = IsDeviceRemoved(pInfo);
+	if (!hr)
+		return false;
+
+	// スタンバイ モード
+	if (pInfo->StandbyMode) {
+		hr = pInfo->pSwapChain->Present(0, DXGI_PRESENT_TEST);
+		if (hr != S_OK) {
+			Sleep(100);	// 0.1秒待つ
+			return true;
+		}
+		pInfo->StandbyMode = false; // スタンバイ モードを解除する
+	}
+
+	// 画面の更新
+	bool res = game->Update(this, pInfo);
+	if (!res)
+		return false;
+
+	hr = Draw(pInfo);
+	if (hr == DXGI_STATUS_OCCLUDED) {
+		pInfo->StandbyMode = true;  // スタンバイ モードに入る
+	}
+
+	return true;
+}
+
+bool DirectXHelper::Run( const PDirectXRenderInfo& pInfo, IGame* game)
+{
+	MSG msg;
+	do
+	{
+		if (PeekMessage(&msg, 0, 0, 0, PM_REMOVE))
+		{
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
+		}
+		else
+		{
+			if (!AppIdle(pInfo, game))
+				DestroyWindow(pInfo->hWindow);
+		}
+	}
+	while (msg.message != WM_QUIT && msg.message != WM_CLOSE);
+
+	return true;
+}
+
+bool DirectXHelper::IsDeviceRemoved(const PDirectXRenderInfo& pInfo)
+{
+	HRESULT hr;
+
+	// デバイスの消失確認
+	hr = pInfo->pD3DDevice->GetDeviceRemovedReason();
+	switch (hr) {
+	case S_OK:
+		break;         // 正常
+
+	case DXGI_ERROR_DEVICE_HUNG:
+	case DXGI_ERROR_DEVICE_RESET:
+		DXTRACE_ERR(L"IsDeviceRemoved g_pDXInfo->pD3DDevice->GetDeviceRemovedReason", hr);
+		Dispose(pInfo);   // Direct3Dの解放(アプリケーション定義)
+		hr = InitializeDirect3D(pInfo);  // Direct3Dの初期化(アプリケーション定義)
+		if (FAILED(hr))
+			return false; // 失敗。アプリケーションを終了
+		break;
+
+	case DXGI_ERROR_DEVICE_REMOVED:
+	case DXGI_ERROR_DRIVER_INTERNAL_ERROR:
+	case DXGI_ERROR_INVALID_CALL:
+	default:
+		DXTRACE_ERR(L"IsDeviceRemoved g_pDXInfo->pD3DDevice->GetDeviceRemovedReason", hr);
+		return false;   // どうしようもないので、アプリケーションを終了。
+	};
+
+	return true;
+}
 
 bool DirectXHelper::Resize(const PDirectXRenderInfo& pInfo, const SIZE size)
 {
@@ -146,42 +222,42 @@ bool DirectXHelper::Draw(const PDirectXRenderInfo& pInfo)
 		0);                  // ステンシル・バッファをクリアする値(この場合、無関係)
 
 	// 立方体の描画
-	hr = UpdateBuffer(pInfo->pImmediateContext, pInfo->pCBuffer[1], &pInfo->cbChangesEveryFrame, sizeof(cbChangesEveryFrame));
-	if (FAILED(hr))
-		return DXTRACE_ERR(L"InitBackBuffer  UpdateBuffer", hr);  // 失敗
-	hr = UpdateBuffer(pInfo->pImmediateContext, pInfo->pCBuffer[2], &pInfo->cbChangesEveryObject, sizeof(cbChangesEveryObject));
-	if (FAILED(hr))
-		return DXTRACE_ERR(L"InitBackBuffer  UpdateBuffer", hr);  // 失敗
+	//hr = UpdateBuffer(pInfo->pImmediateContext, pInfo->pCBuffer[1], &pInfo->cbChangesEveryFrame, sizeof(cbChangesEveryFrame));
+	//if (FAILED(hr))
+	//	return DXTRACE_ERR(L"InitBackBuffer  UpdateBuffer", hr);  // 失敗
+	//hr = UpdateBuffer(pInfo->pImmediateContext, pInfo->pCBuffer[2], &pInfo->cbChangesEveryObject, sizeof(cbChangesEveryObject));
+	//if (FAILED(hr))
+	//	return DXTRACE_ERR(L"InitBackBuffer  UpdateBuffer", hr);  // 失敗
 
 	// IAに頂点バッファを設定
-	UINT strides[1] = { sizeof(VertexPositionColorTexture) };
-	UINT offsets[1] = { 0 };
-	pInfo->pImmediateContext->IASetVertexBuffers(0, 1, pInfo->pVerBuffer, strides, offsets);
-	pInfo->pImmediateContext->IASetIndexBuffer(pInfo->pIdxBuffer, DXGI_FORMAT_R32_UINT, 0);
-	pInfo->pImmediateContext->IASetInputLayout(pInfo->pInputLayout);
-	pInfo->pImmediateContext->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	//UINT strides[1] = { sizeof(VertexPositionColorTexture) };
+	//UINT offsets[1] = { 0 };
+	//pInfo->pImmediateContext->IASetVertexBuffers(0, 1, pInfo->pVerBuffers, strides, offsets);
+	//pInfo->pImmediateContext->IASetIndexBuffer(pInfo->pIndexBuffer, DXGI_FORMAT_R32_UINT, 0);
+	//pInfo->pImmediateContext->IASetInputLayout(pInfo->pInputLayout);
+	//pInfo->pImmediateContext->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-	pInfo->pImmediateContext->VSSetShader(pInfo->pVertexShader, NULL, 0);
-	pInfo->pImmediateContext->VSSetConstantBuffers(0, 3, pInfo->pCBuffer);
+	//pInfo->pImmediateContext->VSSetShader(pInfo->pVertexShader, NULL, 0);
+	//pInfo->pImmediateContext->VSSetConstantBuffers(0, 3, pInfo->pCBuffer);
 
-	pInfo->pImmediateContext->GSSetShader(pInfo->pGeometryShader, NULL, 0);
-	pInfo->pImmediateContext->GSSetConstantBuffers(0, 3, pInfo->pCBuffer);
+	//pInfo->pImmediateContext->GSSetShader(pInfo->pGeometryShader, NULL, 0);
+	//pInfo->pImmediateContext->GSSetConstantBuffers(0, 3, pInfo->pCBuffer);
 
-	pInfo->pImmediateContext->RSSetViewports(1, pInfo->ViewPort);
-	pInfo->pImmediateContext->RSSetState(pInfo->pRasterizerState);
+	//pInfo->pImmediateContext->RSSetViewports(1, pInfo->ViewPort);
+	//pInfo->pImmediateContext->RSSetState(pInfo->pRasterizerState);
 
-	pInfo->pImmediateContext->PSSetShader(pInfo->pPixelShader, NULL, 0);
-	pInfo->pImmediateContext->PSSetConstantBuffers(0, 3, pInfo->pCBuffer);
+	//pInfo->pImmediateContext->PSSetShader(pInfo->pPixelShader, NULL, 0);
+	//pInfo->pImmediateContext->PSSetConstantBuffers(0, 3, pInfo->pCBuffer);
 
-	pInfo->pImmediateContext->OMSetRenderTargets(1, &pInfo->pRenderTargetView, pInfo->DepthMode ? pInfo->pDepthStencilView : NULL);
-	FLOAT BlendFactor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-	pInfo->pImmediateContext->OMSetBlendState(pInfo->pBlendState, BlendFactor, 0xffffffff);
-	pInfo->pImmediateContext->OMSetDepthStencilState(pInfo->pDepthStencilState, 0);
+	//pInfo->pImmediateContext->OMSetRenderTargets(1, &pInfo->pRenderTargetView, pInfo->DepthMode ? pInfo->pDepthStencilView : NULL);
+	//FLOAT BlendFactor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+	//pInfo->pImmediateContext->OMSetBlendState(pInfo->pBlendState, BlendFactor, 0xffffffff);
+	//pInfo->pImmediateContext->OMSetDepthStencilState(pInfo->pDepthStencilState, 0);
 
-	pInfo->pImmediateContext->DrawIndexed(
-		36, // 描画するインデックス数(頂点数)
-		0,  // インデックス・バッファの最初のインデックスから描画開始
-		0); // 頂点バッファ内の最初の頂点データから使用開始
+	//pInfo->pImmediateContext->DrawIndexed(
+	//	36, // 描画するインデックス数(頂点数)
+	//	0,  // インデックス・バッファの最初のインデックスから描画開始
+	//	0); // 頂点バッファ内の最初の頂点データから使用開始
 
 	hr = pInfo->pSwapChain->Present(0,	// 画面を直ぐに更新する
 		0);	// 画面を実際に更新する
@@ -189,7 +265,7 @@ bool DirectXHelper::Draw(const PDirectXRenderInfo& pInfo)
 	return SUCCEEDED(hr);
 }
 
-bool DirectXHelper::Dispose(const PDirectXRenderInfo& pInfo)
+bool DirectXHelper::Dispose(const PDirectXRenderInfo& pInfo, const bool disposeWindow)
 {
 	// デバイス・ステートのクリア
 	if (pInfo->pImmediateContext)
@@ -200,32 +276,15 @@ bool DirectXHelper::Dispose(const PDirectXRenderInfo& pInfo)
 		pInfo->pSwapChain->SetFullscreenState(FALSE, NULL);
 
 	// 取得したインターフェイスの開放
-	SAFE_RELEASE(pInfo->pDepthStencilState);
-	SAFE_RELEASE(pInfo->pBlendState);
-	SAFE_RELEASE(pInfo->pRasterizerState);
+	if (!pInfo->IsDisposed())
+		pInfo->Dispose();
 
-	SAFE_RELEASE(pInfo->pCBuffer[2]);
-	SAFE_RELEASE(pInfo->pCBuffer[1]);
-	SAFE_RELEASE(pInfo->pCBuffer[0]);
-
-	SAFE_RELEASE(pInfo->pInputLayout);
-
-	SAFE_RELEASE(pInfo->pPixelShader);
-	SAFE_RELEASE(pInfo->pGeometryShader);
-	SAFE_RELEASE(pInfo->pVertexShader);
-
-	SAFE_RELEASE(pInfo->pIdxBuffer);
-	SAFE_RELEASE(pInfo->pVerBuffer[1]);
-	SAFE_RELEASE(pInfo->pVerBuffer[0]);
-
-	SAFE_RELEASE(pInfo->pDepthStencilView);
-	SAFE_RELEASE(pInfo->pDepthStencil);
-
-	SAFE_RELEASE(pInfo->pRenderTargetView);
-	SAFE_RELEASE(pInfo->pSwapChain);
-
-	SAFE_RELEASE(pInfo->pImmediateContext);
-	SAFE_RELEASE(pInfo->pD3DDevice);
+	if (disposeWindow)
+	{
+		g_pDXHelper = NULL;
+		g_pDXInfo = NULL;
+		UnregisterClass(WindowConfiguration::WindowTitle.c_str(), pInfo->hInst);
+	}
 
 	return true;
 }
@@ -249,53 +308,196 @@ ID3D11Buffer* DirectXHelper::CreateVertexBuffer(const PDirectXRenderInfo& pInfo,
 
 	HRESULT hr = pInfo->pD3DDevice->CreateBuffer(&bufferDesc, &subData, &pBuffer);
 	if (FAILED(hr))
-		return DXTRACE_ERR(L"InitDirect3D g_pD3DDevice->CreateBuffer", hr);
+	{
+		DXTRACE_ERR_MSGBOX(L"InitDirect3D g_pD3DDevice->CreateBuffer", hr);
+		return NULL;
+	}
 
-	return S_OK;
+	return pBuffer;
 }
 
 ID3D11Buffer* DirectXHelper::CreateIndexBuffer(const PDirectXRenderInfo& pInfo, const int dataCount, const UINT* pData)
 {
+	ID3D11Buffer* pBuffer = NULL;
 
-}
-
-HRESULT DirectXHelper::GenerateVertexBuffer(const int dataCount, const int structSize, const void* pData, ID3D11Device* pD3DDevice, ID3D11Buffer** ppBuffer)
-{
-}
-
-HRESULT DirectXHelper::GenerateIndexBuffer(const int dataCount, const UINT* pData, ID3D11Device* pD3DDevice, ID3D11Buffer** ppBuffer)
-{
-	// インデックス・バッファの定義
 	D3D11_BUFFER_DESC idxBufferDesc;
-	idxBufferDesc.Usage = D3D11_USAGE_DEFAULT;     // デフォルト使用法
-	idxBufferDesc.ByteWidth = sizeof(UINT) * dataCount;       // 12×3頂点
-	idxBufferDesc.BindFlags = D3D11_BIND_INDEX_BUFFER; // インデックス・バッファ
+	idxBufferDesc.Usage = D3D11_USAGE_DEFAULT;
+	idxBufferDesc.ByteWidth = sizeof(UINT) * dataCount;
+	idxBufferDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
 	idxBufferDesc.CPUAccessFlags = 0;
 	idxBufferDesc.MiscFlags = 0;
 	idxBufferDesc.StructureByteStride = 0;
 
-	// インデックス・バッファのサブリソースの定義
 	D3D11_SUBRESOURCE_DATA idxSubData;
-	idxSubData.pSysMem = pData;  // バッファ・データの初期値
+	idxSubData.pSysMem = pData;
 	idxSubData.SysMemPitch = 0;
 	idxSubData.SysMemSlicePitch = 0;
 
-	// インデックス・バッファの作成
-	HRESULT hr = pD3DDevice->CreateBuffer(&idxBufferDesc, &idxSubData, ppBuffer);
+	HRESULT hr = pInfo->pD3DDevice->CreateBuffer(&idxBufferDesc, &idxSubData, &pBuffer);
 	if (FAILED(hr))
-		return DXTRACE_ERR(L"InitDirect3D g_pD3DDevice->CreateBuffer", hr);
+	{
+		DXTRACE_ERR_MSGBOX(L"InitDirect3D g_pD3DDevice->CreateBuffer", hr);
+		return NULL;
+	}
 
-	return S_OK;
+	return pBuffer;
 }
 
-bool DirectXHelper::SetVertexBuffer(const ID3D11Buffer*)
+bool DirectXHelper::SetVertexBuffer(const PDirectXRenderInfo& pInfo, ID3D11Buffer* vertBuffer)
 {
-
+	pInfo->pVerBuffers[0] = vertBuffer;
+	return true;
 }
 
-bool DirectXHelper::SetIndexBuffer(const ID3D11Buffer*)
+bool DirectXHelper::SetIndexBuffer(const PDirectXRenderInfo& pInfo, ID3D11Buffer* idxBuffer)
 {
+	pInfo->pIndexBuffer = idxBuffer;
+	return true;
+}
 
+ID3D11VertexShader* DirectXHelper::LoadVertexShader(const PDirectXRenderInfo& pInfo, const std::wstring& filepath, const std::string& entryPoint, ID3DBlob** ppBlob)
+{
+	ID3D11VertexShader* pShader = NULL;
+
+	if (ppBlob != NULL)
+		*ppBlob = NULL;
+
+	ID3DBlob* pBlob = NULL;
+	HRESULT hr = D3DX11CompileFromFile(filepath.c_str(), NULL, NULL, "VS", entryPoint.c_str(), pInfo->dxconfig.FlagCompile, 0, NULL, &pBlob, NULL, NULL);
+	if (FAILED(hr))
+	{
+		DXTRACE_ERR_MSGBOX(L"InitDirect3D D3DX11CompileShaderFromFile", hr);
+		return NULL;
+	}
+
+	// 頂点シェーダの作成
+	hr = pInfo->pD3DDevice->CreateVertexShader(
+		pBlob->GetBufferPointer(), // バイト・コードへのポインタ
+		pBlob->GetBufferSize(),    // バイト・コードの長さ
+		NULL,
+		&pShader); // 頂点シェーダを受け取る変数
+
+	if (FAILED(hr))
+	{
+		SAFE_RELEASE(pBlob);
+		DXTRACE_ERR_MSGBOX(L"InitDirect3D g_pD3DDevice->CreateVertexShader", hr);
+		return NULL;
+	}
+
+	if (ppBlob != NULL)
+		*ppBlob = pBlob;
+
+	return pShader;
+}
+
+ID3D11GeometryShader* DirectXHelper::LoadGeometryShader(const PDirectXRenderInfo& pInfo, const std::wstring& filepath, const std::string& entryPoint, ID3DBlob** ppBlob)
+{
+	ID3D11GeometryShader* pShader = NULL;
+
+	if (ppBlob != NULL)
+		*ppBlob = NULL;
+
+	ID3DBlob* pBlob = NULL;
+	HRESULT hr = D3DX11CompileFromFile(filepath.c_str(), NULL, NULL, "GS", entryPoint.c_str(), pInfo->dxconfig.FlagCompile, 0, NULL, &pBlob, NULL, NULL);
+	if (FAILED(hr))
+	{
+		DXTRACE_ERR_MSGBOX(L"InitDirect3D D3DX11CompileShaderFromFile", hr);
+		return NULL;
+	}
+
+	// 頂点シェーダの作成
+	hr = pInfo->pD3DDevice->CreateGeometryShader(
+		pBlob->GetBufferPointer(), // バイト・コードへのポインタ
+		pBlob->GetBufferSize(),    // バイト・コードの長さ
+		NULL,
+		&pShader); // 頂点シェーダを受け取る変数
+
+	if (FAILED(hr))
+	{
+		SAFE_RELEASE(pBlob);
+		DXTRACE_ERR_MSGBOX(L"InitDirect3D g_pD3DDevice->CreateVertexShader", hr);
+		return NULL;
+	}
+
+	if (ppBlob != NULL)
+		*ppBlob = pBlob;
+
+	return pShader;
+}
+
+ID3D11PixelShader* DirectXHelper::LoadPixelShader(const PDirectXRenderInfo& pInfo, const std::wstring& filepath, const std::string& entryPoint, ID3DBlob** ppBlob)
+{
+	ID3D11PixelShader* pShader = NULL;
+
+	if (ppBlob != NULL)
+		*ppBlob = NULL;
+
+	ID3DBlob* pBlob = NULL;
+	HRESULT hr = D3DX11CompileFromFile(filepath.c_str(), NULL, NULL, "PS", entryPoint.c_str(), pInfo->dxconfig.FlagCompile, 0, NULL, &pBlob, NULL, NULL);
+	if (FAILED(hr))
+	{
+		DXTRACE_ERR_MSGBOX(L"InitDirect3D D3DX11CompileShaderFromFile", hr);
+		return NULL;
+	}
+
+	// 頂点シェーダの作成
+	hr = pInfo->pD3DDevice->CreatePixelShader(
+		pBlob->GetBufferPointer(), // バイト・コードへのポインタ
+		pBlob->GetBufferSize(),    // バイト・コードの長さ
+		NULL,
+		&pShader); // 頂点シェーダを受け取る変数
+
+	if (FAILED(hr))
+	{
+		SAFE_RELEASE(pBlob);
+		DXTRACE_ERR_MSGBOX(L"InitDirect3D g_pD3DDevice->CreateVertexShader", hr);
+		return NULL;
+	}
+
+	if (ppBlob != NULL)
+		*ppBlob = pBlob;
+
+	return pShader;
+}
+
+bool DirectXHelper::SetShader(const PDirectXRenderInfo& pInfo, ID3D11VertexShader* pShader)
+{
+	pInfo->pVertexShader = pShader;
+	return true;
+}
+
+bool DirectXHelper::SetShader(const PDirectXRenderInfo& pInfo, ID3D11GeometryShader* pShader)
+{
+	pInfo->pGeometryShader = pShader;
+	return true;
+}
+
+bool DirectXHelper::SetShader(const PDirectXRenderInfo& pInfo, ID3D11PixelShader* pShader)
+{
+	pInfo->pPixelShader = pShader;
+	return true;
+}
+
+ID3D11InputLayout* DirectXHelper::SetInputLayout(const PDirectXRenderInfo& pInfo, UINT layoutCount, D3D11_INPUT_ELEMENT_DESC* layout, ID3DBlob* pBlobVS)
+{
+	ID3D11InputLayout* pInputLayout = NULL;
+
+	HRESULT hr = pInfo->pD3DDevice->CreateInputLayout(
+		layout,                            
+		layoutCount,
+		pBlobVS->GetBufferPointer(),
+		pBlobVS->GetBufferSize(),
+		&pInputLayout);
+
+	SAFE_RELEASE(pBlobVS);
+
+	if (FAILED(hr))
+	{
+		DXTRACE_ERR_MSGBOX(L"DirectXHelper::SetInputLayout", hr);
+		return NULL;
+	}
+
+	return pInputLayout;
 }
 
 //==================================================================================================
@@ -307,7 +509,7 @@ bool DirectXHelper::SetIndexBuffer(const ID3D11Buffer*)
 // ウインドウ生成・表示
 HRESULT DirectXHelper::InitializeWindow(HINSTANCE hInst, HWND* phWindow)
 {
-	HRESULT hr = GenerateWindow(hInst, MainWndProc, WindowConfiguration::WindowTitle, WindowConfiguration::WindowName, WindowConfiguration::WindowSize, phWindow);
+	HRESULT hr = GenerateWindow(hInst, OnWndProc, WindowConfiguration::WindowTitle, WindowConfiguration::WindowName, WindowConfiguration::WindowSize, phWindow);
 	if (FAILED(hr))
 		return DXTRACE_ERR(L"InitializeWindow", hr);
 	ShowWindow(*phWindow, SW_SHOWNORMAL);
@@ -350,7 +552,24 @@ HRESULT  DirectXHelper::GenerateWindow(const HINSTANCE hInst, const WNDPROC OnWi
 	return S_OK;
 }
 
-HRESULT DirectXHelper::GenerateDeviceSwapChain(const DirectXConfiguration& dxconfig, const SIZE& bufferSize, const HWND& hWindow, PDirectXRenderInfo& pinfo)
+
+HRESULT DirectXHelper::InitializeDirect3D(const PDirectXRenderInfo& pInfo)
+{
+	RECT rc;
+	GetClientRect(pInfo->hWindow, &rc);
+	UINT width = rc.right - rc.left;
+	UINT height = rc.bottom - rc.top;
+
+	HRESULT hr = GenerateDeviceSwapChain(pInfo->dxconfig, { width, height }, pInfo->hWindow, pInfo);
+	if (FAILED(hr))
+	{
+		return DXTRACE_ERR(L"DirectXHelper::Initialize GenerateDeviceSwapChain", hr);
+	}
+
+	return S_OK;
+}
+
+HRESULT DirectXHelper::GenerateDeviceSwapChain(const DirectXConfiguration& dxconfig, const SIZE& bufferSize, const HWND& hWindow, const PDirectXRenderInfo& pinfo)
 {
 	// デバイスとスワップ チェインの作成
 	DXGI_SWAP_CHAIN_DESC sd;
@@ -426,87 +645,6 @@ HRESULT DirectXHelper::GenerateDeviceSwapChain(const DirectXConfiguration& dxcon
 	}
 
 	pinfo->SetDeviceSwapChain(pD3DDevice, pImmediateContext, pSwapChain, FeatureLevelsSupported);
-
-	return S_OK;
-}
-
-HRESULT DirectXHelper::LoadVertexShader(
-	const std::wstring& filepath, const std::string& entryPoint, const DirectXConfiguration& dxconfig, ID3D11Device* pD3DDevice,
-	ID3DBlob** ppBlobVS, ID3D11VertexShader** ppShader)
-{
-	ID3DBlob* pBlobVS = NULL;
-	HRESULT hr = D3DX11CompileFromFile(
-		filepath.c_str(), NULL, NULL,
-		"VS", entryPoint.c_str(), dxconfig.FlagCompile, 0, NULL,
-		&pBlobVS, NULL, NULL);
-	if (FAILED(hr))
-		return DXTRACE_ERR(L"InitDirect3D D3DX11CompileShaderFromFile", hr);
-
-	*ppBlobVS = pBlobVS;
-
-	// 頂点シェーダの作成
-	hr = pD3DDevice->CreateVertexShader(
-		pBlobVS->GetBufferPointer(), // バイト・コードへのポインタ
-		pBlobVS->GetBufferSize(),    // バイト・コードの長さ
-		NULL,
-		ppShader); // 頂点シェーダを受け取る変数
-
-	if (FAILED(hr)) {
-		SAFE_RELEASE(pBlobVS);
-		return DXTRACE_ERR(L"InitDirect3D g_pD3DDevice->CreateVertexShader", hr);
-	}
-
-	return S_OK;
-}
-
-HRESULT DirectXHelper::LoadPixelShader(
-	const std::wstring& filepath, const std::string& entryPoint, const DirectXConfiguration& dxconfig,
-	ID3D11Device* pD3DDevice, ID3D11PixelShader** ppShader)
-{
-	ID3DBlob* pBlobVS = NULL;
-	HRESULT hr = D3DX11CompileFromFile(
-		filepath.c_str(), NULL, NULL,
-		"PS", entryPoint.c_str(), dxconfig.FlagCompile, 0, NULL,
-		&pBlobVS, NULL, NULL);
-	if (FAILED(hr))
-		return DXTRACE_ERR(L"InitDirect3D D3DX11CompileShaderFromFile", hr);
-
-	// 頂点シェーダの作成
-	hr = pD3DDevice->CreatePixelShader(
-		pBlobVS->GetBufferPointer(), // バイト・コードへのポインタ
-		pBlobVS->GetBufferSize(),    // バイト・コードの長さ
-		NULL,
-		ppShader); // 頂点シェーダを受け取る変数
-	if (FAILED(hr)) {
-		SAFE_RELEASE(pBlobVS);
-		return DXTRACE_ERR(L"InitDirect3D g_pD3DDevice->CreateVertexShader", hr);
-	}
-
-	return S_OK;
-}
-
-HRESULT DirectXHelper::LoadGeometryShader(
-	const std::wstring& filepath, const std::string& entryPoint, const DirectXConfiguration& dxconfig,
-	ID3D11Device* pD3DDevice, ID3D11GeometryShader** ppShader)
-{
-	ID3DBlob* pBlobVS = NULL;
-	HRESULT hr = D3DX11CompileFromFile(
-		filepath.c_str(), NULL, NULL,
-		"GS", entryPoint.c_str(), dxconfig.FlagCompile, 0, NULL,
-		&pBlobVS, NULL, NULL);
-	if (FAILED(hr))
-		return DXTRACE_ERR(L"InitDirect3D D3DX11CompileShaderFromFile", hr);
-
-	// 頂点シェーダの作成
-	hr = pD3DDevice->CreateGeometryShader(
-		pBlobVS->GetBufferPointer(), // バイト・コードへのポインタ
-		pBlobVS->GetBufferSize(),    // バイト・コードの長さ
-		NULL,
-		ppShader); // 頂点シェーダを受け取る変数
-	if (FAILED(hr)) {
-		SAFE_RELEASE(pBlobVS);
-		return DXTRACE_ERR(L"InitDirect3D g_pD3DDevice->CreateVertexShader", hr);
-	}
 
 	return S_OK;
 }
@@ -658,16 +796,6 @@ HRESULT DirectXHelper::InitBackBuffer(const PDirectXRenderInfo& pInfo)
 	return S_OK;
 }
 
-
-HRESULT DirectXHelper::SetVertices(
-	const PDirectXRenderInfo& pInfo, 
-	const int vertCount, const int structSize, const void* vertData, 
-	const int idxCount, const UINT* idxData)
-{
-
-}
-
-
 HRESULT DirectXHelper::UpdateBuffer(ID3D11DeviceContext* pContext, ID3D11Buffer* pBuffer, void* pData, UINT dataSize)
 {
 	D3D11_MAPPED_SUBRESOURCE MappedResource;
@@ -676,241 +804,4 @@ HRESULT DirectXHelper::UpdateBuffer(ID3D11DeviceContext* pContext, ID3D11Buffer*
 		return DXTRACE_ERR(L"InitBackBuffer  g_pImmediateContext->Map", hr);  // 失敗
 	CopyMemory(MappedResource.pData, pData, dataSize);
 	pContext->Unmap(pBuffer, 0);
-}
-
-
-HRESULT GenerateWindow(const HINSTANCE hInst, const WNDPROC OnWidowEvent, const std::wstring wndTitle, const std::wstring wndName, const SIZE wndSize, HWND* pWnd)
-{
-	WNDCLASS wc;
-	wc.style = CS_HREDRAW | CS_VREDRAW;
-	wc.lpfnWndProc = OnWidowEvent;
-	wc.cbClsExtra = 0;
-	wc.cbWndExtra = 0;
-	wc.hInstance = hInst;
-	wc.hIcon = NULL;
-	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
-	wc.lpszMenuName = NULL;
-	wc.lpszClassName = wndName.c_str();
-
-	if (!RegisterClass(&wc))
-	{
-		return DXTRACE_ERR(L"GenerateWindow", GetLastError());
-	}
-
-	RECT rect;
-	rect.top = 0;
-	rect.left = 0;
-	rect.right = wndSize.cx;
-	rect.bottom = wndSize.cy;
-	AdjustWindowRect(&rect, WS_OVERLAPPEDWINDOW, TRUE);
-
-	*pWnd = CreateWindow(
-		wndName.c_str(), wndTitle.c_str(), WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-		rect.right - rect.left, rect.bottom - rect.top, NULL, NULL, hInst, NULL);
-	if (*pWnd == NULL)
-		return DXTRACE_ERR(L"GenerateWindow", GetLastError());
-
-	return S_OK;
-}
-
-HRESULT InitializeWindow(HINSTANCE hInst)
-{
-	g_hInstance = hInst;
-	HRESULT hr = GenerateWindow(hInst, MainWndProc, WindowConfiguration::WindowTitle, WindowConfiguration::WindowName, WindowConfiguration::WindowSize, &g_hWindow);
-	if (FAILED(hr))
-		return DXTRACE_ERR(L"InitializeWindow", hr);
-	ShowWindow(g_hWindow, SW_SHOWNORMAL);
-	UpdateWindow(g_hWindow);
-	return S_OK;
-}
-
-DirectXHelper* g_pDXHelper = NULL;
-PDirectXRenderInfo g_pDXInfo;
-DirectXConfiguration g_dxConfig;
-
-HRESULT InitDirect3D()
-{
-	// ウインドウのクライアント エリア
-	RECT rc;
-	GetClientRect(g_hWindow, &rc);
-	UINT width = rc.right - rc.left;
-	UINT height = rc.bottom - rc.top;
-
-	g_pDXHelper = new DirectXHelper();
-	g_pDXInfo = g_pDXHelper->Initialize(g_hWindow, { width, height }, g_dxConfig);
-
-	return S_OK;
-}
-
-void Update(void)
-{
-	//	XMVECTORF32 eyePosition = { 0.0f, 5.0f, -5.0f, 1.0f };  // 視点(カメラの位置)
-	//	XMVECTORF32 focusPosition = { 0.0f, 0.0f, 0.0f, 1.0f };  // 注視点
-	//	XMVECTORF32 upDirection = { 0.0f, 1.0f, 0.0f, 1.0f };  // カメラの上方向
-	//	XMMATRIX mat = XMMatrixLookAtLH(eyePosition, focusPosition, upDirection);
-	//	XMStoreFloat4x4(&g_cbChangesEveryFrame.View, XMMatrixTranspose(mat));
-	//
-	//	XMVECTOR vec = XMVector3TransformCoord(XMLoadFloat3(&g_vLightPos), mat);
-	//	XMStoreFloat3(&g_cbChangesEveryFrame.Light, vec);
-	//
-	//	XMMATRIX matY, matX;
-	//	FLOAT rotate = (FLOAT)(XM_PI * (timeGetTime() % 3000)) / 1500.0f;
-	//	matY = XMMatrixRotationY(rotate);
-	//	rotate = (FLOAT)(XM_PI * (timeGetTime() % 1500)) / 750.0f;
-	//	matX = XMMatrixRotationX(rotate);
-	//	XMStoreFloat4x4(&g_cbChangesEveryObject.World, XMMatrixTranspose(matY * matX));
-}
-
-HRESULT Render(void)
-{
-	bool res = g_pDXHelper->Draw(g_pDXInfo, g_dxConfig);
-	return res ? S_OK : !S_OK;
-}
-
-/*-------------------------------------------
-Direct3Dの終了処理
---------------------------------------------*/
-bool CleanupDirect3D(void)
-{
-	return g_pDXHelper->Dispose(g_pDXInfo);
-}
-
-/*-------------------------------------------
-アプリケーションの終了処理
---------------------------------------------*/
-bool CleanupApp(void)
-{
-	// ウインドウ クラスの登録解除
-	UnregisterClass(g_szWndClass, g_hInstance);
-	return true;
-}
-
-/*-------------------------------------------
-ウィンドウ処理
---------------------------------------------*/
-LRESULT CALLBACK MainWndProc(HWND hWnd, UINT msg, UINT wParam, LONG lParam)
-{
-	HRESULT hr = S_OK;
-	BOOL fullscreen;
-
-	switch (msg)
-	{
-	case WM_DESTROY:
-		// Direct3Dの終了処理
-		CleanupDirect3D();
-		// ウインドウを閉じる
-		PostQuitMessage(0);
-		g_hWindow = NULL;
-		return 0;
-
-		// ウインドウ サイズの変更処理
-	case WM_SIZE:
-		if (!g_pDXInfo || !g_pDXInfo->pD3DDevice || wParam == SIZE_MINIMIZED)
-			break;
-
-		// 描画ターゲットを解除する
-		g_pDXInfo->pImmediateContext->OMSetRenderTargets(0, NULL, NULL);	// 描画ターゲットの解除
-		SAFE_RELEASE(g_pDXInfo->pRenderTargetView);					    // 描画ターゲット ビューの解放
-		SAFE_RELEASE(g_pDXInfo->pDepthStencilView);					// 深度/ステンシル ビューの解放
-		SAFE_RELEASE(g_pDXInfo->pDepthStencil);						// 深度/ステンシル テクスチャの解放
-
-		// バッファの変更
-		g_pDXInfo->pSwapChain->ResizeBuffers(3, LOWORD(lParam), HIWORD(lParam), DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH);
-
-		// バック バッファの初期化
-		g_pDXHelper->InitBackBuffer(g_pDXInfo);
-		break;
-
-	case WM_KEYDOWN:
-		// キー入力の処理
-		switch (wParam)
-		{
-		case VK_ESCAPE:	// [ESC]キーでウインドウを閉じる
-			PostMessage(hWnd, WM_CLOSE, 0, 0);
-			break;
-
-		case VK_F2:		// [F2]キーで深度バッファのモードを切り替える
-			g_pDXInfo->DepthMode = !g_pDXInfo->DepthMode;
-			break;
-
-		case VK_F5:		// [F5]キーで画面モードを切り替える
-			if (g_pDXInfo->pSwapChain != NULL) {
-				g_pDXInfo->pSwapChain->GetFullscreenState(&fullscreen, NULL);
-				g_pDXInfo->pSwapChain->SetFullscreenState(!fullscreen, NULL);
-			}
-			break;
-		}
-		break;
-	}
-
-	// デフォルト処理
-	return DefWindowProc(hWnd, msg, wParam, lParam);
-}
-
-/*--------------------------------------------
-デバイスの消失処理
---------------------------------------------*/
-HRESULT IsDeviceRemoved(void)
-{
-	HRESULT hr;
-
-	// デバイスの消失確認
-	hr = g_pDXInfo->pD3DDevice->GetDeviceRemovedReason();
-	switch (hr) {
-	case S_OK:
-		break;         // 正常
-
-	case DXGI_ERROR_DEVICE_HUNG:
-	case DXGI_ERROR_DEVICE_RESET:
-		DXTRACE_ERR(L"IsDeviceRemoved g_pDXInfo->pD3DDevice->GetDeviceRemovedReason", hr);
-		CleanupDirect3D();   // Direct3Dの解放(アプリケーション定義)
-		hr = InitDirect3D();  // Direct3Dの初期化(アプリケーション定義)
-		if (FAILED(hr))
-			return hr; // 失敗。アプリケーションを終了
-		break;
-
-	case DXGI_ERROR_DEVICE_REMOVED:
-	case DXGI_ERROR_DRIVER_INTERNAL_ERROR:
-	case DXGI_ERROR_INVALID_CALL:
-	default:
-		DXTRACE_ERR(L"IsDeviceRemoved g_pDXInfo->pD3DDevice->GetDeviceRemovedReason", hr);
-		return hr;   // どうしようもないので、アプリケーションを終了。
-	};
-
-	return S_OK;         // 正常
-}
-
-/*--------------------------------------------
-アイドル時の処理
---------------------------------------------*/
-bool AppIdle(void)
-{
-	if (!g_pDXInfo->pD3DDevice)
-		return false;
-
-	HRESULT hr;
-	// デバイスの消失処理
-	hr = IsDeviceRemoved();
-	if (FAILED(hr))
-		return false;
-
-	// スタンバイ モード
-	if (g_pDXInfo->StandbyMode) {
-		hr = g_pDXInfo->pSwapChain->Present(0, DXGI_PRESENT_TEST);
-		if (hr != S_OK) {
-			Sleep(100);	// 0.1秒待つ
-			return true;
-		}
-		g_pDXInfo->StandbyMode = false; // スタンバイ モードを解除する
-	}
-
-	// 画面の更新
-	Update();
-	hr = Render();
-	if (hr == DXGI_STATUS_OCCLUDED) {
-		g_pDXInfo->StandbyMode = true;  // スタンバイ モードに入る
-	}
-
-	return true;
 }
