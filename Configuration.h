@@ -1,3 +1,5 @@
+#pragma once
+
 #include "stdafx.h"
 
 #include <string>
@@ -15,10 +17,6 @@ struct WindowConfiguration : public Configuration
 	static const std::wstring WindowName;
 	static const SIZE WindowSize;
 };
-
-const std::wstring WindowConfiguration::WindowTitle = L"Direct3D 11 Sample05";
-const std::wstring WindowConfiguration::WindowName = L"D3D11S05";
-const SIZE WindowConfiguration::WindowSize = { 640, 480 };
 
 
 struct DirectXConfiguration : public Configuration
@@ -48,6 +46,3 @@ struct DirectXConfiguration : public Configuration
 	static const D3D_DRIVER_TYPE DriverType = D3D_DRIVER_TYPE_HARDWARE;
 };
 
-
-const D3D_FEATURE_LEVEL DirectXConfiguration::FeatureLevels[3] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_1, D3D_FEATURE_LEVEL_10_0 };
-const float DirectXConfiguration::ClearColor[4] = { 0.0f, 0.125f, 0.3f, 1.0f };

@@ -70,6 +70,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="Configuration.cpp" />
     <ClCompile Include="DirectXHelper.cpp" />
     <ClCompile Include="Game.cpp" />
     <ClCompile Include="main.cpp" />
@@ -80,7 +81,6 @@
     <ClInclude Include="DirectXHelper.h" />
     <ClInclude Include="DirectXRenderInfo.h" />
     <ClInclude Include="Game.h" />
-    <ClInclude Include="GameWindow\GameWindow.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="VertexPositionColorTexture.h" />
   </ItemGroup>
