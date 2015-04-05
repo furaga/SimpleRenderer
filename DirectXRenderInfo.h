@@ -26,12 +26,13 @@ struct DirectXRenderInfo
 
 	ID3D11InputLayout*        pInputLayout = NULL;
 	ID3D11Buffer*             pVerBuffers[1];
+	UINT				      verStride;
 	ID3D11Buffer*             pIndexBuffer = NULL;
 
 	ID3D11VertexShader*       pVertexShader = NULL;
 	ID3D11GeometryShader*     pGeometryShader = NULL;
 	ID3D11PixelShader*        pPixelShader = NULL;
-	ID3D11Buffer*             pCBuffer[3];
+//	ID3D11Buffer*             pCBuffer[3];
 
 	ID3D11BlendState*         pBlendState = NULL;
 	ID3D11RasterizerState*	  pRasterizerState = NULL;
@@ -43,23 +44,22 @@ struct DirectXRenderInfo
 	// スタンバイモード
 	bool StandbyMode = false;
 
-	XMFLOAT3 LightPos;
+//	XMFLOAT3 LightPos;
 
-	cbNeverChanges       cbNeverChanges;       // 透視変換行列
-	cbChangesEveryFrame  cbChangesEveryFrame;  // ビュー変換行列　光源座標
-	cbChangesEveryObject cbChangesEveryObject; // ワールド変換行列
+//	cbNeverChanges       cbNeverChanges;       // 透視変換行列
+//	cbChangesEveryFrame  cbChangesEveryFrame;  // ビュー変換行列　光源座標
+//	cbChangesEveryObject cbChangesEveryObject; // ワールド変換行列
 
 	SIZE sizeWindow;
 
 private:
 	bool dispoed = false;
-
 public:
 	DirectXRenderInfo()
 	{
 		pVerBuffers[0] = NULL;
-		for (int i = 0; i < 3; i++)
-			pCBuffer[i] = NULL;
+//		for (int i = 0; i < 3; i++)
+	//		pCBuffer[i] = NULL;
 	}
 	bool IsDisposed()
 	{
@@ -71,10 +71,10 @@ public:
 		SAFE_RELEASE(this->pBlendState);
 		SAFE_RELEASE(this->pRasterizerState);
 
-		SAFE_RELEASE(this->pCBuffer[2]);
+	/*	SAFE_RELEASE(this->pCBuffer[2]);
 		SAFE_RELEASE(this->pCBuffer[1]);
 		SAFE_RELEASE(this->pCBuffer[0]);
-
+*/
 		SAFE_RELEASE(this->pInputLayout);
 
 		SAFE_RELEASE(this->pPixelShader);
@@ -102,7 +102,7 @@ public:
 		pD3DDevice = device;
 		pSwapChain = swapchain;
 	}
-	void SetConstBuffer(const ::cbNeverChanges& data)
+	/*void SetConstBuffer(const ::cbNeverChanges& data)
 	{
 		cbNeverChanges = data;
 	}
@@ -113,17 +113,17 @@ public:
 	void SetConstBuffer(const ::cbChangesEveryObject& data)
 	{
 		cbChangesEveryObject = data;
-	}
-	::cbNeverChanges GetcbNeverChanges() const
-	{
-		return cbNeverChanges;
-	}
-	::cbChangesEveryFrame GetcbChangesEveryFrame() const
-	{
-		return cbChangesEveryFrame;
-	}
-	::cbChangesEveryObject GetcbChangesEveryObject() const
-	{
-		return cbChangesEveryObject;
-	}
+	}*/
+	//::cbNeverChanges GetcbNeverChanges() const
+	//{
+	//	return cbNeverChanges;
+	//}
+	//::cbChangesEveryFrame GetcbChangesEveryFrame() const
+	//{
+	//	return cbChangesEveryFrame;
+	//}
+	//::cbChangesEveryObject GetcbChangesEveryObject() const
+	//{
+	//	return cbChangesEveryObject;
+	//}
 };

@@ -11,4 +11,5 @@ public:
 	virtual bool Initialize(DirectXHelper*, const PDirectXRenderInfo&) = 0;
 	virtual bool Dispose(DirectXHelper*, const PDirectXRenderInfo&) = 0;
 	virtual bool Update(DirectXHelper*, const PDirectXRenderInfo&) = 0;
+	virtual bool Draw(DirectXHelper*, const PDirectXRenderInfo&) = 0;
 };

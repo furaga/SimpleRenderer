@@ -24,23 +24,32 @@ public:
 
 	bool Resize(const PDirectXRenderInfo&, const SIZE);
 
+	void BeginDraw(const PDirectXRenderInfo& pInfo);
+	bool EndDraw(const PDirectXRenderInfo& pInfo);
+	void VSSetConstantBuffer(const PDirectXRenderInfo& pInfo, const int count, ID3D11Buffer** ppCBuffer);
+	void GSSetConstantBuffer(const PDirectXRenderInfo& pInfo, const int count, ID3D11Buffer** ppCBuffer);
+	void PSSetConstantBuffer(const PDirectXRenderInfo& pInfo, const int count, ID3D11Buffer** ppCBuffer);
+	void DrawPrimitives(const PDirectXRenderInfo& pInfo, const D3D_PRIMITIVE_TOPOLOGY primitiveType, const int icount, const int ioffset, const int voffset);
 	bool Draw(const PDirectXRenderInfo&);
 
 	bool Dispose(const PDirectXRenderInfo&, const bool disposeWindow = false);
 
 	ID3D11Buffer* CreateVertexBuffer(const PDirectXRenderInfo&, const int dataCount, const int structSize, const void* pData);
+	bool SetVertexBuffer(const PDirectXRenderInfo&, ID3D11Buffer*, const int structSize);
 	ID3D11Buffer* CreateIndexBuffer(const PDirectXRenderInfo&, const int dataCount, const UINT* pData);
-	bool SetVertexBuffer(const PDirectXRenderInfo&, ID3D11Buffer*);
 	bool SetIndexBuffer(const PDirectXRenderInfo&, ID3D11Buffer*);
 
 	ID3D11VertexShader* LoadVertexShader(const PDirectXRenderInfo& pInfo, const std::wstring& filepath, const std::string& entryPoint, ID3DBlob** ppBlob);
-	ID3D11GeometryShader* LoadGeometryShader(const PDirectXRenderInfo& pInfo, const std::wstring& filepath, const std::string& entryPoint, ID3DBlob** ppBlob);
-	ID3D11PixelShader* LoadPixelShader(const PDirectXRenderInfo& pInfo, const std::wstring& filepath, const std::string& entryPoint, ID3DBlob** ppBlob);
 	bool SetShader(const PDirectXRenderInfo&, ID3D11VertexShader*);
+	ID3D11GeometryShader* LoadGeometryShader(const PDirectXRenderInfo& pInfo, const std::wstring& filepath, const std::string& entryPoint, ID3DBlob** ppBlob);
 	bool SetShader(const PDirectXRenderInfo&, ID3D11GeometryShader*);
+	ID3D11PixelShader* LoadPixelShader(const PDirectXRenderInfo& pInfo, const std::wstring& filepath, const std::string& entryPoint, ID3DBlob** ppBlob);
 	bool SetShader(const PDirectXRenderInfo&, ID3D11PixelShader*);
 
-	ID3D11InputLayout* SetInputLayout(const PDirectXRenderInfo& pInfo, UINT count, D3D11_INPUT_ELEMENT_DESC layout[], ID3DBlob* pBlobVS);
+	bool SetInputLayout(const PDirectXRenderInfo& pInfo, UINT count, D3D11_INPUT_ELEMENT_DESC layout[], ID3DBlob* pBlobVS);
+
+	bool GenerateConstantBuffer(const PDirectXRenderInfo& pInfo, const UINT size, ID3D11Buffer** ppBuffer);
+	bool UpdateBuffer(const PDirectXRenderInfo& pInfo, ID3D11Buffer* pBuffer, void* pData, const int dataSize);
 
 private:
 	bool AppIdle(const PDirectXRenderInfo& pInfo, IGame* game);

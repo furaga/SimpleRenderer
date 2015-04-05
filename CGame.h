@@ -11,6 +11,7 @@ public:
 	bool Initialize(DirectXHelper*, const PDirectXRenderInfo&);
 	bool Dispose(DirectXHelper*, const PDirectXRenderInfo&);
 	bool Update(DirectXHelper*, const PDirectXRenderInfo&);
+    bool Draw(DirectXHelper* pHelper, const PDirectXRenderInfo& pInfo);
 private:
 	class Impl;
 	std::unique_ptr<Impl> pImpl;

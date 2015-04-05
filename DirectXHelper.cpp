@@ -21,15 +21,17 @@ LRESULT CALLBACK OnWndProc(HWND hWnd, UINT msg, UINT wParam, LONG lParam)
 	switch (msg)
 	{
 	case WM_DESTROY:
-		// Direct3Dの終了処理
-		g_pDXHelper->Dispose(*g_pDXInfo);
 		// ウインドウを閉じる
 		PostQuitMessage(0);
-		(*g_pDXInfo)->hWindow = NULL;
+		// Direct3Dの終了処理
+		if (g_pDXInfo != NULL && (*g_pDXInfo) != nullptr && g_pDXHelper != NULL)
+			g_pDXHelper->Dispose(*g_pDXInfo);
+		if (g_pDXInfo != NULL && (*g_pDXInfo) != nullptr)
+			(*g_pDXInfo)->hWindow = NULL;
 		return 0;
 
-		// ウインドウ サイズの変更処理
 	case WM_SIZE:
+		// ウインドウ サイズの変更処理
 		if (!g_pDXInfo || !(*g_pDXInfo)->pD3DDevice || wParam == SIZE_MINIMIZED)
 			break;
 		g_pDXHelper->Resize(*g_pDXInfo, { LOWORD(lParam), HIWORD(lParam) });
@@ -40,7 +42,7 @@ LRESULT CALLBACK OnWndProc(HWND hWnd, UINT msg, UINT wParam, LONG lParam)
 		switch (wParam)
 		{
 		case VK_ESCAPE:	// [ESC]キーでウインドウを閉じる
-			PostMessage(hWnd, WM_CLOSE, 0, 0);
+			PostQuitMessage(0);
 			break;
 
 		case VK_F2:		// [F2]キーで深度バッファのモードを切り替える
@@ -126,10 +128,9 @@ bool DirectXHelper::AppIdle(const PDirectXRenderInfo& pInfo, IGame* game)
 	if (!res)
 		return false;
 
-	hr = Draw(pInfo);
-	if (hr == DXGI_STATUS_OCCLUDED) {
-		pInfo->StandbyMode = true;  // スタンバイ モードに入る
-	}
+	res = game->Draw(this, pInfo);
+	if (!res)
+		return false;
 
 	return true;
 }
@@ -150,7 +151,7 @@ bool DirectXHelper::Run( const PDirectXRenderInfo& pInfo, IGame* game)
 				DestroyWindow(pInfo->hWindow);
 		}
 	}
-	while (msg.message != WM_QUIT && msg.message != WM_CLOSE);
+	while (msg.message != WM_QUIT);
 
 	return true;
 }
@@ -202,10 +203,8 @@ bool DirectXHelper::Resize(const PDirectXRenderInfo& pInfo, const SIZE size)
 	return true;
 }
 
-bool DirectXHelper::Draw(const PDirectXRenderInfo& pInfo)
+void DirectXHelper::BeginDraw(const PDirectXRenderInfo& pInfo)
 {
-	HRESULT hr;
-
 	// 描画ターゲットのクリア
 	auto ctx = pInfo->pImmediateContext;
 	auto rtv = pInfo->pRenderTargetView;
@@ -221,52 +220,80 @@ bool DirectXHelper::Draw(const PDirectXRenderInfo& pInfo)
 		1.0f,                // 深度バッファをクリアする値
 		0);                  // ステンシル・バッファをクリアする値(この場合、無関係)
 
-	// 立方体の描画
-	//hr = UpdateBuffer(pInfo->pImmediateContext, pInfo->pCBuffer[1], &pInfo->cbChangesEveryFrame, sizeof(cbChangesEveryFrame));
-	//if (FAILED(hr))
-	//	return DXTRACE_ERR(L"InitBackBuffer  UpdateBuffer", hr);  // 失敗
-	//hr = UpdateBuffer(pInfo->pImmediateContext, pInfo->pCBuffer[2], &pInfo->cbChangesEveryObject, sizeof(cbChangesEveryObject));
-	//if (FAILED(hr))
-	//	return DXTRACE_ERR(L"InitBackBuffer  UpdateBuffer", hr);  // 失敗
-
 	// IAに頂点バッファを設定
-	//UINT strides[1] = { sizeof(VertexPositionColorTexture) };
-	//UINT offsets[1] = { 0 };
-	//pInfo->pImmediateContext->IASetVertexBuffers(0, 1, pInfo->pVerBuffers, strides, offsets);
-	//pInfo->pImmediateContext->IASetIndexBuffer(pInfo->pIndexBuffer, DXGI_FORMAT_R32_UINT, 0);
-	//pInfo->pImmediateContext->IASetInputLayout(pInfo->pInputLayout);
-	//pInfo->pImmediateContext->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	UINT strides[1] = { pInfo->verStride };
+	UINT offsets[1] = { 0 };
+	pInfo->pImmediateContext->IASetVertexBuffers(0, 1, pInfo->pVerBuffers, strides, offsets);
+	pInfo->pImmediateContext->IASetIndexBuffer(pInfo->pIndexBuffer, DXGI_FORMAT_R32_UINT, 0);
+	pInfo->pImmediateContext->IASetInputLayout(pInfo->pInputLayout);
+	pInfo->pImmediateContext->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-	//pInfo->pImmediateContext->VSSetShader(pInfo->pVertexShader, NULL, 0);
-	//pInfo->pImmediateContext->VSSetConstantBuffers(0, 3, pInfo->pCBuffer);
+	pInfo->pImmediateContext->VSSetShader(pInfo->pVertexShader, NULL, 0);
+//	pInfo->pImmediateContext->VSSetConstantBuffers(0, 3, pInfo->pCBuffer);
 
-	//pInfo->pImmediateContext->GSSetShader(pInfo->pGeometryShader, NULL, 0);
-	//pInfo->pImmediateContext->GSSetConstantBuffers(0, 3, pInfo->pCBuffer);
+	pInfo->pImmediateContext->GSSetShader(pInfo->pGeometryShader, NULL, 0);
+//	pInfo->pImmediateContext->GSSetConstantBuffers(0, 3, pInfo->pCBuffer);
 
-	//pInfo->pImmediateContext->RSSetViewports(1, pInfo->ViewPort);
-	//pInfo->pImmediateContext->RSSetState(pInfo->pRasterizerState);
+	pInfo->pImmediateContext->RSSetViewports(1, pInfo->ViewPort);
+	pInfo->pImmediateContext->RSSetState(pInfo->pRasterizerState);
 
-	//pInfo->pImmediateContext->PSSetShader(pInfo->pPixelShader, NULL, 0);
-	//pInfo->pImmediateContext->PSSetConstantBuffers(0, 3, pInfo->pCBuffer);
+	pInfo->pImmediateContext->PSSetShader(pInfo->pPixelShader, NULL, 0);
+//	pInfo->pImmediateContext->PSSetConstantBuffers(0, 3, pInfo->pCBuffer);
 
-	//pInfo->pImmediateContext->OMSetRenderTargets(1, &pInfo->pRenderTargetView, pInfo->DepthMode ? pInfo->pDepthStencilView : NULL);
-	//FLOAT BlendFactor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
-	//pInfo->pImmediateContext->OMSetBlendState(pInfo->pBlendState, BlendFactor, 0xffffffff);
-	//pInfo->pImmediateContext->OMSetDepthStencilState(pInfo->pDepthStencilState, 0);
+	pInfo->pImmediateContext->OMSetRenderTargets(1, &pInfo->pRenderTargetView, pInfo->DepthMode ? pInfo->pDepthStencilView : NULL);
+	FLOAT BlendFactor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+	pInfo->pImmediateContext->OMSetBlendState(pInfo->pBlendState, BlendFactor, 0xffffffff);
+	pInfo->pImmediateContext->OMSetDepthStencilState(pInfo->pDepthStencilState, 0);
+}
 
-	//pInfo->pImmediateContext->DrawIndexed(
-	//	36, // 描画するインデックス数(頂点数)
-	//	0,  // インデックス・バッファの最初のインデックスから描画開始
-	//	0); // 頂点バッファ内の最初の頂点データから使用開始
+bool DirectXHelper::EndDraw(const PDirectXRenderInfo& pInfo)
+{
+	HRESULT hr = pInfo->pSwapChain->Present(0, 0);
 
-	hr = pInfo->pSwapChain->Present(0,	// 画面を直ぐに更新する
-		0);	// 画面を実際に更新する
+	if (hr == DXGI_STATUS_OCCLUDED) {
+		pInfo->StandbyMode = true;  // スタンバイ モードに入る
+	}
 
 	return SUCCEEDED(hr);
 }
 
+void DirectXHelper::VSSetConstantBuffer(const PDirectXRenderInfo& pInfo, const int count, ID3D11Buffer** ppCBuffer)
+{
+	pInfo->pImmediateContext->VSSetConstantBuffers(0, count, ppCBuffer);
+}
+
+void DirectXHelper::GSSetConstantBuffer(const PDirectXRenderInfo& pInfo, const int count, ID3D11Buffer** ppCBuffer)
+{
+	pInfo->pImmediateContext->GSSetConstantBuffers(0, count, ppCBuffer);
+}
+
+void DirectXHelper::PSSetConstantBuffer(const PDirectXRenderInfo& pInfo, const int count, ID3D11Buffer** ppCBuffer)
+{
+	pInfo->pImmediateContext->PSSetConstantBuffers(0, count, ppCBuffer);
+}
+
+void DirectXHelper::DrawPrimitives(const PDirectXRenderInfo& pInfo, const D3D_PRIMITIVE_TOPOLOGY primitiveType, const int icount, const int ioffset, const int voffset)
+{
+	pInfo->pImmediateContext->IASetPrimitiveTopology(primitiveType);
+	pInfo->pImmediateContext->DrawIndexed(
+		icount, // 描画するインデックス数(頂点数)
+		ioffset,  // インデックス・バッファの最初のインデックスから描画開始
+		voffset); // 頂点バッファ内の最初の頂点データから使用開始
+}
+
+bool DirectXHelper::Draw(const PDirectXRenderInfo& pInfo)
+{
+	BeginDraw(pInfo);
+
+
+	return EndDraw(pInfo);
+}
+
 bool DirectXHelper::Dispose(const PDirectXRenderInfo& pInfo, const bool disposeWindow)
 {
+	if (pInfo == nullptr)
+		return false;
+
 	// デバイス・ステートのクリア
 	if (pInfo->pImmediateContext)
 		pInfo->pImmediateContext->ClearState();
@@ -343,9 +370,10 @@ ID3D11Buffer* DirectXHelper::CreateIndexBuffer(const PDirectXRenderInfo& pInfo, 
 	return pBuffer;
 }
 
-bool DirectXHelper::SetVertexBuffer(const PDirectXRenderInfo& pInfo, ID3D11Buffer* vertBuffer)
+bool DirectXHelper::SetVertexBuffer(const PDirectXRenderInfo& pInfo, ID3D11Buffer* verBuffer, const int structSize)
 {
-	pInfo->pVerBuffers[0] = vertBuffer;
+	pInfo->pVerBuffers[0] = verBuffer;
+	pInfo->verStride = structSize;
 	return true;
 }
 
@@ -363,7 +391,7 @@ ID3D11VertexShader* DirectXHelper::LoadVertexShader(const PDirectXRenderInfo& pI
 		*ppBlob = NULL;
 
 	ID3DBlob* pBlob = NULL;
-	HRESULT hr = D3DX11CompileFromFile(filepath.c_str(), NULL, NULL, "VS", entryPoint.c_str(), pInfo->dxconfig.FlagCompile, 0, NULL, &pBlob, NULL, NULL);
+	HRESULT hr = D3DX11CompileFromFile(filepath.c_str(), NULL, NULL, entryPoint.c_str(), "vs_4_0", pInfo->dxconfig.FlagCompile, 0, NULL, &pBlob, NULL, NULL);
 	if (FAILED(hr))
 	{
 		DXTRACE_ERR_MSGBOX(L"InitDirect3D D3DX11CompileShaderFromFile", hr);
@@ -398,7 +426,7 @@ ID3D11GeometryShader* DirectXHelper::LoadGeometryShader(const PDirectXRenderInfo
 		*ppBlob = NULL;
 
 	ID3DBlob* pBlob = NULL;
-	HRESULT hr = D3DX11CompileFromFile(filepath.c_str(), NULL, NULL, "GS", entryPoint.c_str(), pInfo->dxconfig.FlagCompile, 0, NULL, &pBlob, NULL, NULL);
+	HRESULT hr = D3DX11CompileFromFile(filepath.c_str(), NULL, NULL, entryPoint.c_str(), "gs_4_0", pInfo->dxconfig.FlagCompile, 0, NULL, &pBlob, NULL, NULL);
 	if (FAILED(hr))
 	{
 		DXTRACE_ERR_MSGBOX(L"InitDirect3D D3DX11CompileShaderFromFile", hr);
@@ -433,7 +461,7 @@ ID3D11PixelShader* DirectXHelper::LoadPixelShader(const PDirectXRenderInfo& pInf
 		*ppBlob = NULL;
 
 	ID3DBlob* pBlob = NULL;
-	HRESULT hr = D3DX11CompileFromFile(filepath.c_str(), NULL, NULL, "PS", entryPoint.c_str(), pInfo->dxconfig.FlagCompile, 0, NULL, &pBlob, NULL, NULL);
+	HRESULT hr = D3DX11CompileFromFile(filepath.c_str(), NULL, NULL, entryPoint.c_str(), "ps_4_0", pInfo->dxconfig.FlagCompile, 0, NULL, &pBlob, NULL, NULL);
 	if (FAILED(hr))
 	{
 		DXTRACE_ERR_MSGBOX(L"InitDirect3D D3DX11CompileShaderFromFile", hr);
@@ -478,7 +506,7 @@ bool DirectXHelper::SetShader(const PDirectXRenderInfo& pInfo, ID3D11PixelShader
 	return true;
 }
 
-ID3D11InputLayout* DirectXHelper::SetInputLayout(const PDirectXRenderInfo& pInfo, UINT layoutCount, D3D11_INPUT_ELEMENT_DESC* layout, ID3DBlob* pBlobVS)
+bool DirectXHelper::SetInputLayout(const PDirectXRenderInfo& pInfo, UINT layoutCount, D3D11_INPUT_ELEMENT_DESC* layout, ID3DBlob* pBlobVS)
 {
 	ID3D11InputLayout* pInputLayout = NULL;
 
@@ -494,10 +522,37 @@ ID3D11InputLayout* DirectXHelper::SetInputLayout(const PDirectXRenderInfo& pInfo
 	if (FAILED(hr))
 	{
 		DXTRACE_ERR_MSGBOX(L"DirectXHelper::SetInputLayout", hr);
-		return NULL;
+		return false;
 	}
 
-	return pInputLayout;
+	pInfo->pInputLayout = pInputLayout;
+	return true;
+}
+
+bool DirectXHelper::GenerateConstantBuffer(const PDirectXRenderInfo& pInfo, const UINT size, ID3D11Buffer** ppBuffer)
+{
+	D3D11_BUFFER_DESC cBufferDesc;
+	cBufferDesc.Usage = D3D11_USAGE_DYNAMIC;    // 動的(ダイナミック)使用法
+	cBufferDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER; // 定数バッファ
+	cBufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;     // CPUから書き込む
+	cBufferDesc.MiscFlags = 0;
+	cBufferDesc.StructureByteStride = 0;
+	cBufferDesc.ByteWidth = size; // バッファ・サイズ
+
+	HRESULT hr = pInfo->pD3DDevice->CreateBuffer(&cBufferDesc, NULL, ppBuffer);
+	if (FAILED(hr))
+	{
+		DXTRACE_ERR_MSGBOX(L"InitDirect3D g_pD3DDevice->CreateBuffer", hr);
+		return false;
+	}
+
+	return true;
+}
+
+bool DirectXHelper::UpdateBuffer(const PDirectXRenderInfo& pInfo, ID3D11Buffer* pBuffer, void* pData, const int dataSize)
+{
+	HRESULT hr = UpdateBuffer(pInfo->pImmediateContext, pBuffer, pData, static_cast<UINT>(dataSize));
+	return SUCCEEDED(hr);
 }
 
 //==================================================================================================
@@ -565,6 +620,9 @@ HRESULT DirectXHelper::InitializeDirect3D(const PDirectXRenderInfo& pInfo)
 	{
 		return DXTRACE_ERR(L"DirectXHelper::Initialize GenerateDeviceSwapChain", hr);
 	}
+	SetBlendMode(pInfo->pD3DDevice, &pInfo->pBlendState);
+	SetRasterMode(pInfo->pD3DDevice, &pInfo->pRasterizerState);
+	SetDepthTest(pInfo->pD3DDevice, &pInfo->pDepthStencilState);
 
 	return S_OK;
 }
@@ -648,6 +706,7 @@ HRESULT DirectXHelper::GenerateDeviceSwapChain(const DirectXConfiguration& dxcon
 
 	return S_OK;
 }
+
 
 HRESULT DirectXHelper::GenerateConstantBuffers(const UINT bufferCount, const UINT* sizes, ID3D11Device* pD3DDevice, ID3D11Buffer** pBuffers)
 {
@@ -804,4 +863,5 @@ HRESULT DirectXHelper::UpdateBuffer(ID3D11DeviceContext* pContext, ID3D11Buffer*
 		return DXTRACE_ERR(L"InitBackBuffer  g_pImmediateContext->Map", hr);  // 失敗
 	CopyMemory(MappedResource.pData, pData, dataSize);
 	pContext->Unmap(pBuffer, 0);
+	return S_OK;
 }
